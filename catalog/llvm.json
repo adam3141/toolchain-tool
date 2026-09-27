@@ -1,0 +1,358 @@
+{
+  "id": "llvm",
+  "title": "LLVM / Clang",
+  "description": "LLVM with any of its sub-projects (clang, lld, lldb, flang, ...) plus the runtimes (libc++, compiler-rt, ...).",
+  "dockerfile": "llvm.Dockerfile",
+  "image": "toolchain-llvm",
+  "prefix": "/opt/llvm",
+  "version_arg": "LLVM_VERSION",
+
+
+  "stages": [
+    {"id": "base", "title": "Base packages", "description": "cmake, ninja, host gcc and clang, and every library the projects can use. Only changes with the Ubuntu version."},
+    {"id": "source", "title": "LLVM source", "description": "Downloads and unpacks llvm-project."},
+    {"id": "compiler", "title": "LLVM + projects", "description": "cmake + ninja install of LLVM, clang, lld, ..."},
+    {"id": "runtimes", "title": "Runtimes", "description": "libc++, libc++abi, libunwind, compiler-rt, ... built by the new clang in a separate standalone build."}
+  ],
+
+  "args": [
+    {"name": "UBUNTU_VERSION", "stage": "base", "kind": "value"},
+    {"name": "LLVM_VERSION", "stage": "source", "kind": "value"},
+    {"name": "PREFIX", "stage": "compiler", "kind": "value"},
+    {"name": "LLVM_HOST_COMPILER", "stage": "compiler", "kind": "value"},
+    {"name": "LLVM_BUILD_TYPE", "stage": "compiler", "kind": "value"},
+    {"name": "LLVM_PROJECTS", "stage": "compiler", "kind": "list", "sep": ";"},
+    {"name": "LLVM_TARGETS", "stage": "compiler", "kind": "list", "sep": ";"},
+    {"name": "LLVM_CMAKE_FLAGS", "stage": "compiler", "kind": "words"},
+    {"name": "LLVM_INSTALL_TARGET", "stage": "compiler", "kind": "value"},
+    {"name": "LLVM_RUNTIMES", "stage": "runtimes", "kind": "list", "sep": ";"},
+    {"name": "LLVM_RUNTIMES_BUILD_TYPE", "stage": "runtimes", "kind": "value"},
+    {"name": "LLVM_RUNTIMES_CMAKE_FLAGS", "stage": "runtimes", "kind": "words"}
+  ],
+
+  "sections": [
+    {
+      "id": "projects",
+      "title": "Projects",
+      "description": "LLVM_ENABLE_PROJECTS",
+      "options": [
+        {
+          "id": "projects",
+          "label": "Projects",
+          "type": "multi",
+          "arg": "LLVM_PROJECTS",
+          "default": ["clang", "lld"],
+          "description": "Sub-projects built together with LLVM (LLVM_ENABLE_PROJECTS). Dependencies are selected automatically.",
+          "choices": [
+            {"value": "clang", "label": "clang", "description": "The C/C++/Objective-C compiler. Needed for the runtimes."},
+            {"value": "clang-tools-extra", "label": "clang-tools-extra", "requires": ["clang"], "description": "clangd, clang-tidy, include-cleaner, ..."},
+            {"value": "lld", "label": "lld", "description": "The LLVM linker (ld.lld)."},
+            {"value": "lldb", "label": "lldb", "requires": ["clang"], "description": "The LLVM debugger, with Python scripting."},
+            {"value": "mlir", "label": "mlir", "description": "Multi-Level IR compiler framework."},
+            {"value": "flang", "label": "flang", "requires": ["clang", "mlir"], "description": "The Fortran compiler. Very memory hungry to build. From LLVM 21 it needs the flang-rt runtime."},
+            {"value": "polly", "label": "polly", "description": "Polyhedral loop optimiser."},
+            {"value": "bolt", "label": "bolt", "description": "Post-link binary layout optimiser."}
+          ]
+        },
+        {
+          "id": "targets",
+          "label": "Targets",
+          "type": "multi",
+          "arg": "LLVM_TARGETS",
+          "default": ["host"],
+          "description": "Code generators to build (LLVM_TARGETS_TO_BUILD). 'host' is the architecture Docker builds on. Fewer targets build faster.",
+          "choices": [
+            {"value": "host", "label": "host", "description": "Whatever architecture the build machine is."},
+            {"value": "all", "label": "all", "exclusive": true, "description": "Every stable target."},
+            {"value": "AArch64", "label": "AArch64"},
+            {"value": "AMDGPU", "label": "AMDGPU"},
+            {"value": "ARM", "label": "ARM"},
+            {"value": "AVR", "label": "AVR"},
+            {"value": "BPF", "label": "BPF"},
+            {"value": "Hexagon", "label": "Hexagon"},
+            {"value": "Lanai", "label": "Lanai"},
+            {"value": "LoongArch", "label": "LoongArch"},
+            {"value": "Mips", "label": "Mips"},
+            {"value": "MSP430", "label": "MSP430"},
+            {"value": "NVPTX", "label": "NVPTX"},
+            {"value": "PowerPC", "label": "PowerPC"},
+            {"value": "RISCV", "label": "RISCV"},
+            {"value": "Sparc", "label": "Sparc"},
+            {"value": "SPIRV", "label": "SPIRV", "since": "20"},
+            {"value": "SystemZ", "label": "SystemZ"},
+            {"value": "VE", "label": "VE"},
+            {"value": "WebAssembly", "label": "WebAssembly"},
+            {"value": "X86", "label": "X86"},
+            {"value": "XCore", "label": "XCore"}
+          ]
+        },
+        {
+          "id": "experimental_targets",
+          "label": "Experimental targets",
+          "type": "multi",
+          "arg": "LLVM_CMAKE_FLAGS",
+          "template": "-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD={value}",
+          "sep": ";",
+          "default": [],
+          "description": "LLVM_EXPERIMENTAL_TARGETS_TO_BUILD.",
+          "choices": [
+            {"value": "ARC", "label": "ARC"},
+            {"value": "CSKY", "label": "CSKY"},
+            {"value": "DirectX", "label": "DirectX"},
+            {"value": "M68k", "label": "M68k"},
+            {"value": "Xtensa", "label": "Xtensa"}
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "build",
+      "title": "LLVM build",
+      "description": "How LLVM and the projects are compiled.",
+      "options": [
+        {
+          "id": "host_compiler", "label": "Host compiler", "type": "choice", "arg": "LLVM_HOST_COMPILER", "default": "gcc",
+          "description": "Which Ubuntu compiler builds LLVM. Both are installed in the base layer.",
+          "choices": [
+            {"value": "gcc", "label": "gcc (Ubuntu default)"},
+            {"value": "clang", "label": "clang (Ubuntu package)", "description": "Needed for ThinLTO/full LTO builds of LLVM."}
+          ]
+        },
+        {
+          "id": "build_type", "label": "Build type", "type": "choice", "arg": "LLVM_BUILD_TYPE", "default": "Release",
+          "description": "CMAKE_BUILD_TYPE for LLVM and the projects.",
+          "choices": [
+            {"value": "Release", "label": "Release", "description": "-O3, no debug info."},
+            {"value": "RelWithDebInfo", "label": "RelWithDebInfo", "description": "-O2 -g. Large, and linking needs a lot of memory."},
+            {"value": "MinSizeRel", "label": "MinSizeRel", "description": "-Os."},
+            {"value": "Debug", "label": "Debug", "description": "Unoptimised with debug info. Very large and slow."}
+          ]
+        },
+        {
+          "id": "linker", "label": "Linker used to build", "type": "choice", "arg": "LLVM_CMAKE_FLAGS", "default": "lld",
+          "template": "-DLLVM_USE_LINKER={value}",
+          "description": "LLVM_USE_LINKER. lld and mold are much faster than GNU ld for LLVM's large binaries.",
+          "choices": [
+            {"value": "", "label": "default (GNU ld)"},
+            {"value": "lld", "label": "lld (Ubuntu package)"},
+            {"value": "mold", "label": "mold (Ubuntu package)"}
+          ]
+        },
+        {
+          "id": "lto", "label": "LTO of LLVM itself", "type": "choice", "arg": "LLVM_CMAKE_FLAGS", "default": "",
+          "template": "-DLLVM_ENABLE_LTO={value}",
+          "description": "LLVM_ENABLE_LTO. Faster compiler, much slower build. Needs host compiler clang and linker lld.",
+          "choices": [
+            {"value": "", "label": "Off"},
+            {"value": "Thin", "label": "Thin"},
+            {"value": "Full", "label": "Full"}
+          ]
+        },
+        {"id": "assertions", "label": "Assertions", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_ENABLE_ASSERTIONS=ON", "off": "-DLLVM_ENABLE_ASSERTIONS=OFF",
+         "description": "LLVM_ENABLE_ASSERTIONS. Useful when developing against LLVM; slows the compiler by 10-20%."},
+        {"id": "dylib", "label": "Shared libLLVM", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": ["-DLLVM_BUILD_LLVM_DYLIB=ON", "-DLLVM_LINK_LLVM_DYLIB=ON"],
+         "description": "Build libLLVM.so and link the tools against it, as distributions do. Much smaller install."},
+        {"id": "clang_dylib", "label": "Shared libclang-cpp", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DCLANG_LINK_CLANG_DYLIB=ON",
+         "when": [{"option": "dylib", "is": true}, {"option": "projects", "has": "clang"}],
+         "description": "Link the clang tools against libclang-cpp.so. Needs Shared libLLVM."},
+        {"id": "rtti", "label": "RTTI", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_ENABLE_RTTI=ON", "description": "LLVM_ENABLE_RTTI. Needed by some out-of-tree users of the LLVM libraries."},
+        {"id": "eh", "label": "Exceptions", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_ENABLE_EH=ON", "when": [{"option": "rtti", "is": true}],
+         "description": "LLVM_ENABLE_EH. Needs RTTI."},
+        {"id": "zstd", "label": "zstd compression", "type": "bool", "default": true, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_ENABLE_ZSTD=FORCE_ON", "off": "-DLLVM_ENABLE_ZSTD=OFF", "description": "Compressed debug sections, profile data, ..."},
+        {"id": "zlib", "label": "zlib compression", "type": "bool", "default": true, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_ENABLE_ZLIB=FORCE_ON", "off": "-DLLVM_ENABLE_ZLIB=OFF", "description": "zlib support."},
+        {"id": "libxml2", "label": "libxml2", "type": "bool", "default": true, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_ENABLE_LIBXML2=FORCE_ON", "off": "-DLLVM_ENABLE_LIBXML2=OFF", "description": "Used by lld's COFF manifests and lldb."},
+        {"id": "gold_plugin", "label": "LLVMgold linker plugin", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_BINUTILS_INCDIR=/usr/include",
+         "description": "Build LLVMgold.so so GNU ld (with -plugin) can link clang -flto objects. Uses Ubuntu's binutils-dev headers."},
+        {"id": "toolchain_only", "label": "Toolchain only", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_INSTALL_TOOLCHAIN_ONLY=ON",
+         "description": "Install only the compilers, linkers and tools, without the LLVM/clang libraries and headers needed to build against LLVM. Makes the image several GB smaller."},
+        {"id": "install_utils", "label": "Install test utilities", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_INSTALL_UTILS=ON", "description": "Install FileCheck, not, count, ... (handy for lit tests of out-of-tree projects)."},
+        {"id": "optimized_tablegen", "label": "Optimised tablegen", "type": "bool", "default": false, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DLLVM_OPTIMIZED_TABLEGEN=ON", "description": "Build tablegen in release mode even for Debug builds. Speeds up debug builds."},
+        {"id": "parallel_link_jobs", "label": "Parallel link jobs", "type": "string", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DLLVM_PARALLEL_LINK_JOBS={value}", "description": "Limit concurrent links to save memory (for example 4 for Debug or LTO builds). Empty means no limit."},
+        {"id": "default_triple", "label": "Default target triple", "type": "string", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DLLVM_DEFAULT_TARGET_TRIPLE={value}", "description": "Empty uses the host triple."},
+        {"id": "host_cflags", "label": "Extra C flags", "type": "string", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DCMAKE_C_FLAGS={value}", "description": "CMAKE_C_FLAGS for the LLVM build, for example -march=x86-64-v3."},
+        {"id": "host_cxxflags", "label": "Extra C++ flags", "type": "string", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DCMAKE_CXX_FLAGS={value}", "description": "CMAKE_CXX_FLAGS for the LLVM build."},
+        {"id": "extra_cmake", "label": "Extra CMake arguments", "type": "string", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "raw": true, "description": "Appended to the LLVM cmake command as written (shell syntax)."},
+        {
+          "id": "strip", "label": "Strip installed binaries", "type": "choice", "arg": "LLVM_INSTALL_TARGET", "default": "install/strip",
+          "description": "ninja install/strip removes debug symbols from the installed programs and runtimes.",
+          "choices": [
+            {"value": "install/strip", "label": "Yes (install/strip)"},
+            {"value": "install", "label": "No (install)"}
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "clang",
+      "title": "Clang defaults",
+      "description": "What the installed clang uses when no flag says otherwise.",
+      "when": [{"option": "projects", "has": "clang"}],
+      "options": [
+        {"id": "default_stdlib", "label": "Default C++ library", "type": "choice", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DCLANG_DEFAULT_CXX_STDLIB={value}", "description": "CLANG_DEFAULT_CXX_STDLIB (what -stdlib= defaults to).",
+         "choices": [
+           {"value": "", "label": "platform default (libstdc++)"},
+           {"value": "libstdc++", "label": "libstdc++"},
+           {"value": "libc++", "label": "libc++", "description": "Also build the libcxx runtime."}
+         ]},
+        {"id": "default_rtlib", "label": "Default runtime library", "type": "choice", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DCLANG_DEFAULT_RTLIB={value}", "description": "CLANG_DEFAULT_RTLIB (what --rtlib= defaults to).",
+         "choices": [
+           {"value": "", "label": "platform default (libgcc)"},
+           {"value": "libgcc", "label": "libgcc"},
+           {"value": "compiler-rt", "label": "compiler-rt", "description": "Also build the compiler-rt runtime."}
+         ]},
+        {"id": "default_unwindlib", "label": "Default unwinder", "type": "choice", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DCLANG_DEFAULT_UNWINDLIB={value}", "description": "CLANG_DEFAULT_UNWINDLIB (what --unwindlib= defaults to).",
+         "choices": [
+           {"value": "", "label": "platform default"},
+           {"value": "libgcc", "label": "libgcc"},
+           {"value": "libunwind", "label": "libunwind", "description": "Also build the libunwind runtime."},
+           {"value": "none", "label": "none"}
+         ]},
+        {"id": "default_linker", "label": "Default linker", "type": "choice", "default": "", "arg": "LLVM_CMAKE_FLAGS",
+         "template": "-DCLANG_DEFAULT_LINKER={value}", "description": "CLANG_DEFAULT_LINKER (what -fuse-ld= defaults to).",
+         "choices": [
+           {"value": "", "label": "platform default (ld)"},
+           {"value": "lld", "label": "lld", "description": "Also build the lld project."}
+         ]},
+        {"id": "default_pie", "label": "PIE by default", "type": "bool", "default": true, "arg": "LLVM_CMAKE_FLAGS",
+         "on": "-DCLANG_DEFAULT_PIE_ON_LINUX=ON", "off": "-DCLANG_DEFAULT_PIE_ON_LINUX=OFF",
+         "description": "CLANG_DEFAULT_PIE_ON_LINUX."}
+      ]
+    },
+
+    {
+      "id": "runtimes",
+      "title": "Runtimes",
+      "description": "Standard library and compiler runtime, built in their own layer by the new clang.",
+      "when": [{"option": "projects", "has": "clang"}],
+      "options": [
+        {
+          "id": "runtimes",
+          "label": "Runtimes",
+          "type": "multi",
+          "arg": "LLVM_RUNTIMES",
+          "default": ["compiler-rt", "libunwind", "libcxxabi", "libcxx"],
+          "description": "LLVM_ENABLE_RUNTIMES for a standalone runtimes build. Changing anything in this section does not rebuild the compiler.",
+          "choices": [
+            {"value": "compiler-rt", "label": "compiler-rt", "description": "Builtins, sanitizers, profile, XRay, libFuzzer."},
+            {"value": "libunwind", "label": "libunwind", "description": "LLVM's unwinder."},
+            {"value": "libcxxabi", "label": "libc++abi", "description": "C++ ABI library (exceptions, RTTI) under libc++."},
+            {"value": "libcxx", "label": "libc++", "requires": ["libcxxabi"], "description": "The LLVM C++ standard library."},
+            {"value": "openmp", "label": "openmp", "description": "libomp."},
+            {"value": "flang-rt", "label": "flang-rt", "since": "21", "when": [{"option": "projects", "has": "flang"}],
+             "description": "The Fortran runtime (needs the flang project)."}
+          ]
+        },
+        {
+          "id": "runtimes_build_type", "label": "Build type", "type": "choice", "arg": "LLVM_RUNTIMES_BUILD_TYPE", "default": "Release",
+          "description": "CMAKE_BUILD_TYPE for the runtimes.",
+          "choices": [
+            {"value": "Release", "label": "Release"},
+            {"value": "RelWithDebInfo", "label": "RelWithDebInfo"},
+            {"value": "MinSizeRel", "label": "MinSizeRel"},
+            {"value": "Debug", "label": "Debug"}
+          ]
+        },
+        {"id": "hardening", "label": "libc++ hardening mode", "type": "choice", "default": "none", "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "since": "18", "template": "-DLIBCXX_HARDENING_MODE={value}",
+         "when": [{"option": "runtimes", "has": "libcxx"}],
+         "description": "Default _LIBCPP_HARDENING_MODE for code built against this libc++.",
+         "choices": [
+           {"value": "none", "label": "none"},
+           {"value": "fast", "label": "fast", "description": "Cheap security-critical checks."},
+           {"value": "extensive", "label": "extensive", "description": "Most checks that do not change complexity."},
+           {"value": "debug", "label": "debug", "description": "All checks, including expensive ones."}
+         ]},
+        {"id": "abi_version", "label": "libc++ ABI version", "type": "choice", "default": "1", "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "template": "-DLIBCXX_ABI_VERSION={value}", "when": [{"option": "runtimes", "has": "libcxx"}],
+         "description": "Version 2 is the unstable ABI with layout improvements; binaries are incompatible with version 1.",
+         "choices": [
+           {"value": "1", "label": "1 (stable)"},
+           {"value": "2", "label": "2 (unstable)"}
+         ]},
+        {"id": "exceptions", "label": "Exceptions in libc++", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": ["-DLIBCXX_ENABLE_EXCEPTIONS=OFF", "-DLIBCXXABI_ENABLE_EXCEPTIONS=OFF"],
+         "when": [{"option": "runtimes", "has": "libcxx"}],
+         "description": "Turn off to build a -fno-exceptions libc++ / libc++abi."},
+        {"id": "static_abi", "label": "Merge libc++abi into libc++.a", "type": "bool", "default": false, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "on": "-DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON", "when": [{"option": "runtimes", "has": "libcxx"}],
+         "description": "LIBCXX_ENABLE_STATIC_ABI_LIBRARY: static linking needs only -lc++."},
+        {"id": "llvm_unwinder", "label": "libc++abi uses libunwind", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "on": "-DLIBCXXABI_USE_LLVM_UNWINDER=ON", "off": "-DLIBCXXABI_USE_LLVM_UNWINDER=OFF",
+         "when": [{"option": "runtimes", "has": "libcxxabi"}],
+         "description": "LIBCXXABI_USE_LLVM_UNWINDER. Off uses libgcc_s for unwinding."},
+        {"id": "use_compiler_rt", "label": "Runtimes use compiler-rt", "type": "bool", "default": false, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "on": ["-DLIBCXX_USE_COMPILER_RT=ON", "-DLIBCXXABI_USE_COMPILER_RT=ON", "-DLIBUNWIND_USE_COMPILER_RT=ON"],
+         "description": "Link libc++, libc++abi and libunwind against compiler-rt builtins instead of libgcc (a GCC-free C++ stack)."},
+        {"id": "crt_sanitizers", "label": "compiler-rt: sanitizers", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": "-DCOMPILER_RT_BUILD_SANITIZERS=OFF", "when": [{"option": "runtimes", "has": "compiler-rt"}],
+         "description": "ASan, UBSan, TSan, MSan, ... (the bulk of compiler-rt's build time)."},
+        {"id": "crt_xray", "label": "compiler-rt: XRay", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": "-DCOMPILER_RT_BUILD_XRAY=OFF", "when": [{"option": "runtimes", "has": "compiler-rt"}], "description": "Function call tracing."},
+        {"id": "crt_libfuzzer", "label": "compiler-rt: libFuzzer", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF", "when": [{"option": "runtimes", "has": "compiler-rt"}], "description": "-fsanitize=fuzzer."},
+        {"id": "crt_profile", "label": "compiler-rt: profile", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": "-DCOMPILER_RT_BUILD_PROFILE=OFF", "when": [{"option": "runtimes", "has": "compiler-rt"}], "description": "PGO and coverage (-fprofile-instr-generate)."},
+        {"id": "crt_memprof", "label": "compiler-rt: memprof", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": "-DCOMPILER_RT_BUILD_MEMPROF=OFF", "when": [{"option": "runtimes", "has": "compiler-rt"}], "description": "Heap profiler."},
+        {"id": "crt_orc", "label": "compiler-rt: ORC", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "off": "-DCOMPILER_RT_BUILD_ORC=OFF", "when": [{"option": "runtimes", "has": "compiler-rt"}], "description": "ORC JIT runtime."},
+        {"id": "crt_target_only", "label": "compiler-rt: host target only", "type": "bool", "default": true, "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "on": "-DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON", "when": [{"option": "runtimes", "has": "compiler-rt"}],
+         "description": "Skip the i386 variants on x86_64 hosts."},
+        {"id": "runtimes_cflags", "label": "Extra C flags", "type": "string", "default": "", "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "template": "-DCMAKE_C_FLAGS={value}", "description": "CMAKE_C_FLAGS for the runtimes."},
+        {"id": "runtimes_cxxflags", "label": "Extra C++ flags", "type": "string", "default": "", "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "template": "-DCMAKE_CXX_FLAGS={value}", "description": "CMAKE_CXX_FLAGS for the runtimes."},
+        {"id": "runtimes_extra", "label": "Extra CMake arguments", "type": "string", "default": "", "arg": "LLVM_RUNTIMES_CMAKE_FLAGS",
+         "raw": true, "description": "Appended to the runtimes cmake command as written (shell syntax)."}
+      ]
+    }
+  ],
+
+  "rules": [
+    {"if": [{"option": "lto", "in": ["Thin", "Full"]}, {"option": "host_compiler", "in": ["gcc"]}],
+     "level": "error", "message": "LLVM_ENABLE_LTO needs host compiler clang."},
+    {"if": [{"option": "lto", "in": ["Thin", "Full"]}, {"option": "linker", "in": ["", "mold"]}],
+     "level": "warn", "message": "LTO builds of LLVM are best linked with lld."},
+    {"if": [{"option": "projects", "lacks": "clang"}],
+     "level": "info", "message": "The clang project is not selected, so the Clang defaults and the runtimes are skipped."},
+    {"if": [{"option": "default_stdlib", "in": ["libc++"]}, {"option": "runtimes", "lacks": "libcxx"}],
+     "level": "warn", "message": "clang defaults to libc++ but the libcxx runtime is not selected."},
+    {"if": [{"option": "default_rtlib", "in": ["compiler-rt"]}, {"option": "runtimes", "lacks": "compiler-rt"}],
+     "level": "warn", "message": "clang defaults to compiler-rt but the compiler-rt runtime is not selected."},
+    {"if": [{"option": "default_unwindlib", "in": ["libunwind"]}, {"option": "runtimes", "lacks": "libunwind"}],
+     "level": "warn", "message": "clang defaults to libunwind but the libunwind runtime is not selected."},
+    {"if": [{"option": "default_linker", "in": ["lld"]}, {"option": "projects", "lacks": "lld"}],
+     "level": "warn", "message": "clang defaults to lld but the lld project is not selected."},
+    {"if": [{"option": "use_compiler_rt", "is": true}, {"option": "runtimes", "lacks": "compiler-rt"}],
+     "level": "error", "message": "'Runtimes use compiler-rt' needs the compiler-rt runtime."},
+    {"if": [{"option": "llvm_unwinder", "is": true}, {"option": "runtimes", "has": "libcxxabi"}, {"option": "runtimes", "lacks": "libunwind"}],
+     "level": "error", "message": "libc++abi is set to use libunwind but the libunwind runtime is not selected."},
+    {"if": [{"option": "projects", "has": "flang"}, {"version": "llvm", "min": "21"}, {"option": "runtimes", "lacks": "flang-rt"}],
+     "level": "warn", "message": "From LLVM 21 flang needs the flang-rt runtime to link Fortran programs."},
+    {"if": [{"option": "projects", "has": "flang"}],
+     "level": "info", "message": "flang needs roughly 4-6 GB of memory per compile job. Consider limiting parallel link jobs."}
+  ]
+}

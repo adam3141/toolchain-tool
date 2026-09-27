@@ -1,0 +1,242 @@
+{
+  "id": "gcc",
+  "title": "GCC + binutils",
+  "description": "GNU Compiler Collection with a matching GNU binutils (assembler, linker, archiver).",
+  "dockerfile": "gcc.Dockerfile",
+  "image": "toolchain-gcc",
+  "prefix": "/opt/gcc",
+  "version_arg": "GCC_VERSION",
+
+
+  "companion": {
+    "id": "binutils",
+    "title": "binutils",
+    "arg": "BINUTILS_VERSION"
+  },
+
+  "stages": [
+    {"id": "base", "title": "Base packages", "description": "Every prerequisite package for every language. Only changes with the Ubuntu version."},
+    {"id": "binutils", "title": "binutils", "description": "Downloads, builds and installs binutils into the prefix."},
+    {"id": "source", "title": "GCC source", "description": "Downloads and unpacks the GCC release."},
+    {"id": "compiler", "title": "GCC compiler", "description": "configure + build the compiler. With bootstrap on this also builds the runtime libraries."},
+    {"id": "libraries", "title": "Runtime libraries", "description": "libgcc, libstdc++, libgfortran, ... (only a separate step when bootstrap is off)."},
+    {"id": "install", "title": "Install", "description": "make install into the prefix."}
+  ],
+
+  "args": [
+    {"name": "UBUNTU_VERSION", "stage": "base", "kind": "value"},
+    {"name": "PREFIX", "stage": "binutils", "kind": "value"},
+    {"name": "BINUTILS_VERSION", "stage": "binutils", "kind": "value"},
+    {"name": "BINUTILS_CONFIGURE_FLAGS", "stage": "binutils", "kind": "words"},
+    {"name": "GCC_VERSION", "stage": "source", "kind": "value"},
+    {"name": "GCC_LANGUAGES", "stage": "compiler", "kind": "list", "sep": ","},
+    {"name": "GCC_BOOTSTRAP", "stage": "compiler", "kind": "value"},
+    {"name": "GCC_CONFIGURE_FLAGS", "stage": "compiler", "kind": "words"},
+    {"name": "GCC_BUILD_CFLAGS", "stage": "compiler", "kind": "value"},
+    {"name": "GCC_TARGET_CFLAGS", "stage": "libraries", "kind": "value"},
+    {"name": "GCC_TARGET_CXXFLAGS", "stage": "libraries", "kind": "value"},
+    {"name": "GCC_INSTALL_TARGET", "stage": "install", "kind": "value"}
+  ],
+
+  "sections": [
+    {
+      "id": "languages",
+      "title": "Languages",
+      "description": "Front ends passed to --enable-languages.",
+      "options": [
+        {
+          "id": "languages",
+          "label": "Languages",
+          "type": "multi",
+          "arg": "GCC_LANGUAGES",
+          "default": ["c", "c++"],
+          "description": "Which language front ends and runtime libraries to build. Host compilers needed to bootstrap Ada (GNAT), D (GDC) and Rust (cargo) are always installed in the base layer.",
+          "choices": [
+            {"value": "c", "label": "C", "required": true, "description": "Always built; everything else depends on it."},
+            {"value": "c++", "label": "C++", "description": "g++ and libstdc++."},
+            {"value": "fortran", "label": "Fortran", "description": "gfortran and libgfortran (+ libquadmath)."},
+            {"value": "ada", "label": "Ada", "description": "GNAT. Built with the Ubuntu gcc that matches the installed gnat, which the Dockerfile selects automatically."},
+            {"value": "d", "label": "D", "description": "gdc and libphobos. Needs a host D compiler (gdc is installed)."},
+            {"value": "go", "label": "Go", "description": "gccgo and libgo."},
+            {"value": "objc", "label": "Objective-C", "description": "libobjc."},
+            {"value": "obj-c++", "label": "Objective-C++", "requires": ["c++", "objc"], "description": "Needs C++ and Objective-C."},
+            {"value": "m2", "label": "Modula-2", "since": "13", "description": "gm2 and libgm2 (GCC 13+)."},
+            {"value": "rust", "label": "Rust (experimental)", "since": "14", "description": "gccrs. Experimental; from GCC 15 the build needs cargo, which is installed."},
+            {"value": "cobol", "label": "COBOL", "since": "15", "description": "gcobol and libgcobol (GCC 15+, x86_64 and aarch64 hosts)."},
+            {"value": "algol68", "label": "Algol 68", "since": "16", "description": "ga68 and libga68 (GCC 16+)."},
+            {"value": "jit", "label": "libgccjit", "description": "Embeddable JIT library. Requires 'Host shared' (--enable-host-shared)."}
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "build",
+      "title": "Compiler build",
+      "description": "How the compiler itself is configured and built.",
+      "options": [
+        {
+          "id": "bootstrap",
+          "label": "Bootstrap",
+          "type": "choice",
+          "arg": "GCC_BOOTSTRAP",
+          "default": "off",
+          "description": "A bootstrap builds GCC three times so the final compiler is built by itself. It is slower, and it builds libstdc++ and the other bootstrapped libraries together with the compiler, so their options can no longer be changed without rebuilding the compiler. Off is the quickest and keeps the runtime libraries in their own Docker layer.",
+          "choices": [
+            {"value": "off", "label": "Off (single stage)", "emit": {"GCC_BOOTSTRAP": "off"},
+             "description": "Build once with the Ubuntu compiler. Fastest. Runtime library flags stay in a separate layer."},
+            {"value": "on", "label": "Standard 3-stage", "emit": {"GCC_BOOTSTRAP": "on"},
+             "description": "GCC's default for native builds: stage1 with the host compiler, then stages 2 and 3 compared."},
+            {"value": "O3", "label": "3-stage, -O3", "emit": {"GCC_BOOTSTRAP": "on", "GCC_CONFIGURE_FLAGS": "--with-build-config=bootstrap-O3"},
+             "description": "Bootstrap with bootstrap-O3.mk."},
+            {"value": "lto", "label": "3-stage + LTO", "emit": {"GCC_BOOTSTRAP": "on", "GCC_CONFIGURE_FLAGS": "--with-build-config=bootstrap-lto"},
+             "description": "Stages 2 and 3 are built with -flto (bootstrap-lto.mk)."},
+            {"value": "lto-lean", "label": "2-stage + LTO (lean)", "emit": {"GCC_BOOTSTRAP": "on", "GCC_CONFIGURE_FLAGS": "--with-build-config=bootstrap-lto-lean"},
+             "description": "Like LTO but only the final stage uses -flto; faster."},
+            {"value": "profiled", "label": "Profiled (PGO)", "emit": {"GCC_BOOTSTRAP": "profiled"},
+             "description": "make profiledbootstrap: an instrumented compiler is trained, then rebuilt with the profile. Slowest build, fastest compiler."}
+          ]
+        },
+        {
+          "id": "build_cflags",
+          "label": "Compiler build flags",
+          "type": "string",
+          "arg": "GCC_BUILD_CFLAGS",
+          "default": "-O2",
+          "description": "CFLAGS/CXXFLAGS used to compile GCC itself. With bootstrap on these become BOOT_CFLAGS for stages 2 and 3."
+        },
+        {
+          "id": "checking",
+          "label": "Internal checking",
+          "type": "choice",
+          "arg": "GCC_CONFIGURE_FLAGS",
+          "template": "--enable-checking={value}",
+          "default": "release",
+          "description": "Internal consistency checks compiled into the compiler.",
+          "choices": [
+            {"value": "release", "label": "release", "description": "Cheap checks only (the default for releases)."},
+            {"value": "yes", "label": "yes", "description": "Moderate checking; slower compiler."},
+            {"value": "all", "label": "all", "description": "Every check, including very expensive ones."},
+            {"value": "no", "label": "no", "description": "No checking."}
+          ]
+        },
+        {"id": "lto", "label": "LTO support", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-lto", "off": "--disable-lto", "description": "Build the link-time optimiser (lto1, lto-wrapper, the linker plugin)."},
+        {"id": "plugin", "label": "Plugin support", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-plugin", "off": "--disable-plugin", "description": "Allow GCC plugins to be loaded (-fplugin)."},
+        {"id": "host_shared", "label": "Host shared (PIC compiler)", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-host-shared", "description": "Build the compiler as position-independent code. Needed for libgccjit; makes the compiler a little slower."},
+        {"id": "multilib", "label": "Multilib (-m32)", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-multilib", "off": "--disable-multilib",
+         "description": "Also build 32-bit runtime libraries on x86_64. The i386 glibc headers are installed on amd64 hosts only."},
+        {"id": "default_pie", "label": "PIE by default", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-default-pie", "description": "Produce position-independent executables by default, as Ubuntu's GCC does."},
+        {"id": "default_ssp", "label": "Stack protector by default", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-default-ssp", "description": "Enable -fstack-protector-strong by default, as Ubuntu's GCC does."},
+        {"id": "cet", "label": "Intel CET", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-cet", "description": "Build the runtime libraries with Control-flow Enforcement Technology (x86 only)."},
+        {"id": "isl", "label": "Graphite loop optimiser (isl)", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--with-isl", "off": "--without-isl", "description": "Link against the system isl so -floop-* / Graphite optimisations are available."},
+        {"id": "system_zlib", "label": "Use system zlib", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--with-system-zlib", "description": "Use Ubuntu's zlib instead of the copy bundled with GCC."},
+        {"id": "nls", "label": "Native language support", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "off": "--disable-nls", "description": "Translated diagnostics. Off keeps the install smaller."},
+        {"id": "build_id", "label": "Linker build-id", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-linker-build-id", "description": "Pass --build-id to the linker by default."},
+        {"id": "hash_style", "label": "GNU hash style", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--with-linker-hash-style=gnu", "description": "Link with --hash-style=gnu by default."},
+        {"id": "link_serialization", "label": "Serialise front-end links", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-link-serialization", "description": "Link one front-end binary at a time to cap memory use (helps with LTO bootstraps)."},
+        {"id": "major_only", "label": "Major version only in paths", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--with-gcc-major-version-only", "description": "Use lib/gcc/<target>/16 rather than .../16.2.0, as Ubuntu does."},
+        {"id": "with_arch", "label": "Default -march", "type": "string", "default": "", "arg": "GCC_CONFIGURE_FLAGS",
+         "template": "--with-arch={value}", "description": "Default architecture for generated code, for example x86-64-v3 or armv8.2-a. Empty keeps the target default."},
+        {"id": "with_tune", "label": "Default -mtune", "type": "string", "default": "", "arg": "GCC_CONFIGURE_FLAGS",
+         "template": "--with-tune={value}", "description": "Default tuning, for example generic or znver4."},
+        {"id": "program_suffix", "label": "Program suffix", "type": "string", "default": "", "arg": "GCC_CONFIGURE_FLAGS",
+         "template": "--program-suffix={value}", "description": "Append to installed program names, for example -16 gives gcc-16."},
+        {"id": "pkgversion", "label": "Package version string", "type": "string", "default": "", "arg": "GCC_CONFIGURE_FLAGS",
+         "template": "--with-pkgversion={value}", "description": "Replaces '(GCC)' in gcc --version."},
+        {"id": "extra_configure", "label": "Extra configure arguments", "type": "string", "default": "", "arg": "GCC_CONFIGURE_FLAGS",
+         "raw": true, "description": "Appended to the GCC configure command as written (shell syntax, so quote values containing spaces)."}
+      ]
+    },
+
+    {
+      "id": "runtime",
+      "title": "Runtime libraries",
+      "description": "libstdc++ and the other target libraries.",
+      "options": [
+        {"id": "target_cflags", "label": "Library CFLAGS", "type": "string", "default": "-g -O2", "arg": "GCC_TARGET_CFLAGS",
+         "when": [{"option": "bootstrap", "in": ["off"]}],
+         "description": "CFLAGS_FOR_TARGET: flags used to build libgcc, libgfortran, libgomp, ... These are in their own Docker layer, so changing them does not rebuild the compiler."},
+        {"id": "target_cxxflags", "label": "Library CXXFLAGS", "type": "string", "default": "-g -O2", "arg": "GCC_TARGET_CXXFLAGS",
+         "when": [{"option": "bootstrap", "in": ["off"]}],
+         "description": "CXXFLAGS_FOR_TARGET: flags used to build libstdc++ and the other C++ runtime libraries. In their own Docker layer."},
+        {"id": "cxx_abi", "label": "libstdc++ default ABI", "type": "choice", "default": "new", "arg": "GCC_CONFIGURE_FLAGS",
+         "template": "--with-default-libstdcxx-abi={value}",
+         "description": "Which std::string / std::list ABI is the default (configure option, so part of the compiler layer).",
+         "choices": [
+           {"value": "new", "label": "new (C++11)", "description": "The C++11-conforming ABI used by every current distribution."},
+           {"value": "gcc4-compatible", "label": "gcc4-compatible", "description": "The pre-GCC 5 ABI."}
+         ]},
+        {"id": "libstdcxx_debug", "label": "Debug libstdc++", "type": "bool", "default": false, "arg": "GCC_CONFIGURE_FLAGS",
+         "on": "--enable-libstdcxx-debug", "description": "Also install an unoptimised libstdc++ in lib/debug."},
+        {"id": "libstdcxx_pch", "label": "libstdc++ precompiled headers", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "off": "--disable-libstdcxx-pch", "description": "Build bits/stdc++.h.gch. Off saves build time and ~100MB."},
+        {"id": "libstdcxx_backtrace", "label": "std::stacktrace support", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "since": "12", "on": "--enable-libstdcxx-backtrace", "description": "Build the libbacktrace support that <stacktrace> needs."},
+        {"id": "libsanitizer", "label": "Sanitizers", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "off": "--disable-libsanitizer", "description": "ASan, UBSan, TSan, LSan runtimes."},
+        {"id": "libgomp", "label": "OpenMP (libgomp)", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "off": "--disable-libgomp", "description": "OpenMP and OpenACC runtime."},
+        {"id": "libquadmath", "label": "libquadmath", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "off": "--disable-libquadmath", "description": "__float128 maths library (used by Fortran)."},
+        {"id": "libitm", "label": "Transactional memory (libitm)", "type": "bool", "default": true, "arg": "GCC_CONFIGURE_FLAGS",
+         "off": "--disable-libitm", "description": "Runtime for -fgnu-tm."},
+        {"id": "strip", "label": "Strip installed binaries", "type": "choice", "default": "install-strip", "arg": "GCC_INSTALL_TARGET",
+         "description": "make install-strip removes debug symbols from the installed programs. This is the last step of the build.",
+         "choices": [
+           {"value": "install-strip", "label": "Yes (install-strip)"},
+           {"value": "install", "label": "No (install)"}
+         ]}
+      ]
+    },
+
+    {
+      "id": "binutils",
+      "title": "binutils",
+      "description": "Options for the binutils build (assembler, linker, ...).",
+      "options": [
+        {"id": "bu_plugins", "label": "Linker plugins", "type": "bool", "default": true, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "on": "--enable-plugins", "description": "Plugin support in ld, ar, nm (needed for GCC's LTO plugin)."},
+        {"id": "bu_gold", "label": "gold linker", "type": "bool", "default": false, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "until_companion": "2.43.1", "on": "--enable-gold",
+         "description": "Build ld.gold. gold was removed from the main binutils tarball in 2.44."},
+        {"id": "bu_gprofng", "label": "gprofng profiler", "type": "bool", "default": true, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "since_companion": "2.39", "off": "--disable-gprofng", "description": "The next-generation profiler added in binutils 2.39."},
+        {"id": "bu_targets_all", "label": "All targets", "type": "bool", "default": false, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "on": "--enable-targets=all", "description": "objdump/ld understand every supported architecture, not just the host."},
+        {"id": "bu_deterministic", "label": "Deterministic archives", "type": "bool", "default": true, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "on": "--enable-deterministic-archives", "description": "ar/ranlib default to D mode (zero timestamps and uids)."},
+        {"id": "bu_new_dtags", "label": "RUNPATH (new dtags)", "type": "bool", "default": false, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "on": "--enable-new-dtags", "description": "-rpath writes DT_RUNPATH instead of DT_RPATH by default."},
+        {"id": "bu_system_zlib", "label": "Use system zlib", "type": "bool", "default": true, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "on": "--with-system-zlib", "description": "Use Ubuntu's zlib."},
+        {"id": "bu_nls", "label": "Native language support", "type": "bool", "default": false, "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "off": "--disable-nls", "description": "Translated messages."},
+        {"id": "bu_extra", "label": "Extra configure arguments", "type": "string", "default": "", "arg": "BINUTILS_CONFIGURE_FLAGS",
+         "raw": true, "description": "Appended to the binutils configure command as written (shell syntax)."}
+      ]
+    }
+  ],
+
+  "rules": [
+    {"if": [{"option": "languages", "has": "jit"}, {"option": "host_shared", "is": false}],
+     "level": "error", "message": "libgccjit needs 'Host shared (PIC compiler)' turned on."},
+    {"if": [{"option": "bootstrap", "in": ["lto", "lto-lean"]}, {"option": "lto", "is": false}],
+     "level": "error", "message": "An LTO bootstrap needs 'LTO support' turned on."},
+    {"if": [{"option": "bootstrap", "in": ["on", "O3", "lto", "lto-lean", "profiled"]}],
+     "level": "info", "message": "Bootstrap is on: libstdc++, libgcc, libgomp and the sanitizers are built with the compiler, so the runtime library flags are not available and any change rebuilds the compiler."}
+  ]
+}

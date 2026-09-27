@@ -1,0 +1,29 @@
+{
+  "default": "24.04",
+  "versions": [
+    {
+      "version": "22.04",
+      "label": "22.04 LTS (Jammy Jellyfish)",
+      "released": "2022-04",
+      "host": {"gcc": "11", "gnat": "10", "clang": "14", "cmake": "3.22"}
+    },
+    {
+      "version": "24.04",
+      "label": "24.04 LTS (Noble Numbat)",
+      "released": "2024-04",
+      "host": {"gcc": "13", "gnat": "13", "clang": "18", "cmake": "3.28"}
+    },
+    {
+      "version": "26.04",
+      "label": "26.04 LTS (Resolute Raccoon)",
+      "released": "2026-04",
+      "host": {"gcc": "15", "gnat": "14", "clang": "21", "cmake": "4.2"}
+    },
+    {
+      "version": "26.10",
+      "label": "26.10 (Stonking Stingray, interim)",
+      "released": "2026-10",
+      "host": {"gcc": "15", "gnat": "14", "clang": "21", "cmake": "4.3"}
+    }
+  ]
+}
