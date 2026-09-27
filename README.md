@@ -132,6 +132,26 @@ not carry the build dependencies.
 The `export` target contains only the prefix. It is meant for
 `--output type=local,dest=DIR`.
 
+### Using the artifacts elsewhere
+
+Both targets' prefix carries `share/toolchain-tool/runtime-packages.txt` and
+`toolchain.conf`, written during the build, so this travels with the
+toolchain however you get it out: an `export`, or `COPY --from=<image>` in
+another Dockerfile. To set the toolchain up somewhere else, for example a
+devcontainer, copy the prefix in and then:
+
+```sh
+apt-get install -y $(cat /opt/gcc/share/toolchain-tool/runtime-packages.txt)
+cp /opt/gcc/share/toolchain-tool/toolchain.conf /etc/ld.so.conf.d/toolchain.conf
+ldconfig
+```
+
+(`toolchain.conf` lists the toolchain's own library directories, e.g. its
+bundled libstdc++ or libc++; it's often empty for a plain GCC build. Skip the
+`cp`/`ldconfig` step if it's empty.) The same note ships as
+`share/toolchain-tool/README` inside the artifacts themselves
+([source](docker/scripts/metadata-readme.txt)).
+
 ### GCC layers
 
 | Layer | Build args |

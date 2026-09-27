@@ -117,17 +117,24 @@ RUN --mount=type=cache,target=/ccache \
 FROM runtimes AS install
 ARG PREFIX=/opt/llvm
 COPY scripts/runtime-deps.sh /usr/local/bin/runtime-deps
+COPY scripts/metadata-readme.txt /tmp/metadata-readme.txt
 RUN set -eux; \
-    mkdir -p /out; \
-    runtime-deps "${PREFIX}" > /out/runtime-packages.txt; \
-    : > /out/toolchain.conf; \
+    meta="${PREFIX}/share/toolchain-tool"; \
+    mkdir -p "$meta"; \
+    cp /tmp/metadata-readme.txt "$meta/README"; \
+    runtime-deps "${PREFIX}" > "$meta/runtime-packages.txt"; \
+    : > "$meta/toolchain.conf"; \
     if [ -x "${PREFIX}/bin/clang" ]; then \
         d="${PREFIX}/lib/$("${PREFIX}/bin/clang" -print-target-triple)"; \
-        if [ -d "$d" ]; then echo "$d" > /out/toolchain.conf; fi; \
+        if [ -d "$d" ]; then echo "$d" > "$meta/toolchain.conf"; fi; \
     fi; \
-    cat /out/runtime-packages.txt
+    cat "$meta/runtime-packages.txt"
 
 # ---------------------------------------------------------------------------
+# The export target and the layer below both copy the whole prefix, so
+# share/toolchain-tool/ (runtime-packages.txt, toolchain.conf, README) travels
+# with the toolchain however it's consumed: an export, or `COPY --from=` this
+# image's tag in another Dockerfile.
 FROM scratch AS export
 ARG PREFIX=/opt/llvm
 COPY --from=install ${PREFIX} ${PREFIX}
@@ -137,16 +144,14 @@ FROM ubuntu:${UBUNTU_VERSION} AS final
 ARG PREFIX=/opt/llvm
 ARG LLVM_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
-COPY --from=install /out/ /tmp/toolchain/
+COPY --from=install ${PREFIX} ${PREFIX}
 # g++ supplies libstdc++, libgcc and the crt files clang uses by default;
 # binutils supplies ld for when lld is not the default linker.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends g++ binutils make $(cat /tmp/toolchain/runtime-packages.txt); \
+    apt-get install -y --no-install-recommends g++ binutils make $(cat "${PREFIX}/share/toolchain-tool/runtime-packages.txt"); \
     rm -rf /var/lib/apt/lists/*; \
-    cp /tmp/toolchain/toolchain.conf /etc/ld.so.conf.d/toolchain.conf; \
-    rm -rf /tmp/toolchain
-COPY --from=install ${PREFIX} ${PREFIX}
-RUN ldconfig
+    cp "${PREFIX}/share/toolchain-tool/toolchain.conf" /etc/ld.so.conf.d/toolchain.conf; \
+    ldconfig
 ENV PATH=${PREFIX}/bin:${PATH}
 LABEL org.opencontainers.image.title="llvm ${LLVM_VERSION}"

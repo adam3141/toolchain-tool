@@ -120,16 +120,23 @@ FROM libraries AS install
 ARG PREFIX=/opt/gcc
 ARG GCC_INSTALL_TARGET=install-strip
 COPY scripts/runtime-deps.sh /usr/local/bin/runtime-deps
+COPY scripts/metadata-readme.txt /tmp/metadata-readme.txt
 RUN set -eux; \
     cd /build/gcc; \
     make "${GCC_INSTALL_TARGET}"; \
-    mkdir -p /out; \
-    runtime-deps "${PREFIX}" > /out/runtime-packages.txt; \
-    if [ -d "${PREFIX}/lib32" ]; then echo libc6-dev-i386 >> /out/runtime-packages.txt; fi; \
-    for d in lib64 lib lib32; do [ -d "${PREFIX}/$d" ] && echo "${PREFIX}/$d"; done > /out/toolchain.conf; \
-    cat /out/runtime-packages.txt
+    meta="${PREFIX}/share/toolchain-tool"; \
+    mkdir -p "$meta"; \
+    cp /tmp/metadata-readme.txt "$meta/README"; \
+    runtime-deps "${PREFIX}" > "$meta/runtime-packages.txt"; \
+    if [ -d "${PREFIX}/lib32" ]; then echo libc6-dev-i386 >> "$meta/runtime-packages.txt"; fi; \
+    for d in lib64 lib lib32; do [ -d "${PREFIX}/$d" ] && echo "${PREFIX}/$d"; done > "$meta/toolchain.conf"; \
+    cat "$meta/runtime-packages.txt"
 
 # ---------------------------------------------------------------------------
+# The export target and the layer below both copy the whole prefix, so
+# share/toolchain-tool/ (runtime-packages.txt, toolchain.conf, README) travels
+# with the toolchain however it's consumed: an export, or `COPY --from=` this
+# image's tag in another Dockerfile.
 FROM scratch AS export
 ARG PREFIX=/opt/gcc
 COPY --from=install ${PREFIX} ${PREFIX}
@@ -140,14 +147,12 @@ ARG PREFIX=/opt/gcc
 ARG GCC_VERSION
 ARG BINUTILS_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
-COPY --from=install /out/ /tmp/toolchain/
+COPY --from=install ${PREFIX} ${PREFIX}
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends libc6-dev make $(cat /tmp/toolchain/runtime-packages.txt); \
+    apt-get install -y --no-install-recommends libc6-dev make $(cat "${PREFIX}/share/toolchain-tool/runtime-packages.txt"); \
     rm -rf /var/lib/apt/lists/*; \
-    cp /tmp/toolchain/toolchain.conf /etc/ld.so.conf.d/toolchain.conf; \
-    rm -rf /tmp/toolchain
-COPY --from=install ${PREFIX} ${PREFIX}
-RUN ldconfig
+    cp "${PREFIX}/share/toolchain-tool/toolchain.conf" /etc/ld.so.conf.d/toolchain.conf; \
+    ldconfig
 ENV PATH=${PREFIX}/bin:${PATH}
 LABEL org.opencontainers.image.title="gcc ${GCC_VERSION} + binutils ${BINUTILS_VERSION}"

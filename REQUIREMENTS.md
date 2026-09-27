@@ -22,6 +22,7 @@ Status: done, partial, or planned.
 | R14 | Build from the menu, export the install tree, write a build script; the same from the command line | done |
 | R15 | Refresh release lists from upstream | done |
 | R16 | Installed (pipx) use: `toolchain-tool init` copies catalog/docker to a user data directory that is found automatically | done |
+| R17 | Build artifacts (export or the image) carry the apt runtime-package list and ld.so.conf fragment inside the prefix, so they can be set up in another image or container | done |
 
 ## Non-functional
 
