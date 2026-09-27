@@ -193,3 +193,7 @@ docker buildx build -f docker/gcc.Dockerfile -t my-gcc \
   mirror.
 - Building an old GCC or LLVM on a much newer Ubuntu can fail because of the
   newer host compiler and glibc. The review screen warns about this.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
